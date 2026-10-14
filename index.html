@@ -1,0 +1,1835 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>2D to 3D Anti-Gravity Model Studio | 3D AI Viewer</title>
+  <meta name="description" content="Upload a 2D photo and turn it into an interactive 3D model. Cloud TripoSR inference via Hugging Face with an on-device procedural reconstruction fallback, rendered with Three.js." />
+  <meta name="theme-color" content="#0f1117" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: rgba(22, 25, 37, 0.58);
+      --panel-strong: rgba(22, 25, 37, 0.82);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.14);
+      --text: #e7e9f3;
+      --muted: #8d92a8;
+      --indigo: #6366f1;
+      --violet: #8b5cf6;
+      --cyan: #22d3ee;
+      --pink: #ec4899;
+      --green: #34d399;
+      --amber: #fbbf24;
+      --header-h: 72px;
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ---------- Viewport ---------- */
+    #viewport { position: fixed; inset: 0; }
+    #scene {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+      cursor: grab;
+      outline: none;
+    }
+    #scene:active { cursor: grabbing; }
+
+    .vignette {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse at 50% 40%, transparent 45%, rgba(5, 6, 10, 0.55) 100%),
+        radial-gradient(circle at 15% 10%, rgba(99, 102, 241, 0.10), transparent 40%),
+        radial-gradient(circle at 85% 90%, rgba(34, 211, 238, 0.07), transparent 45%);
+      z-index: 1;
+    }
+
+    /* ---------- Header ---------- */
+    .app-header {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px 20px;
+      flex-wrap: wrap;
+      padding: 12px 16px;
+      background: linear-gradient(135deg, rgba(26, 29, 44, 0.66), rgba(15, 17, 23, 0.46));
+      backdrop-filter: blur(18px) saturate(150%);
+      -webkit-backdrop-filter: blur(18px) saturate(150%);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      animation: dropIn 0.7s cubic-bezier(.2, .9, .3, 1.2) both;
+    }
+
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+
+    .logo {
+      flex: none;
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, var(--indigo), var(--violet) 55%, var(--cyan));
+      box-shadow: 0 0 22px rgba(99, 102, 241, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      animation: floaty 4s ease-in-out infinite;
+    }
+    .logo svg { width: 22px; height: 22px; color: #fff; }
+
+    .title-wrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+
+    h1 {
+      font-family: 'Space Grotesk', 'Inter', sans-serif;
+      font-size: 1.12rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      line-height: 1.2;
+    }
+    h1 .grad {
+      background: linear-gradient(90deg, #a5b4fc, var(--cyan) 60%, #f0abfc);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.66rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #c7d2fe;
+      background: rgba(99, 102, 241, 0.14);
+      border: 1px solid rgba(99, 102, 241, 0.42);
+      white-space: nowrap;
+    }
+    .badge::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 8px var(--cyan);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .actions { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+
+    .token-field { display: flex; flex-direction: column; gap: 5px; width: 360px; max-width: 100%; }
+    .token-field label { font-size: 0.68rem; color: var(--muted); line-height: 1.3; }
+
+    .input-wrap { position: relative; display: flex; align-items: center; }
+    .input-wrap .key-icon {
+      position: absolute;
+      left: 11px;
+      width: 15px;
+      height: 15px;
+      color: var(--muted);
+      pointer-events: none;
+    }
+    .input-wrap input {
+      width: 100%;
+      height: 40px;
+      padding: 0 42px 0 34px;
+      background: rgba(0, 0, 0, 0.28);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      color: var(--text);
+      font: 500 0.84rem 'Inter', sans-serif;
+      letter-spacing: 0.02em;
+      transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+    }
+    .input-wrap input::placeholder { color: #5b607a; }
+    .input-wrap input:focus {
+      outline: none;
+      background: rgba(0, 0, 0, 0.4);
+      border-color: rgba(99, 102, 241, 0.75);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+    }
+    .input-wrap.has-value .key-icon { color: var(--green); }
+
+    .eye-btn {
+      position: absolute;
+      right: 5px;
+      width: 32px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+    }
+    .eye-btn:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+    .eye-btn svg { width: 16px; height: 16px; }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      height: 40px;
+      padding: 0 18px;
+      border: none;
+      border-radius: 11px;
+      font: 600 0.88rem 'Inter', sans-serif;
+      color: #fff;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+      background: linear-gradient(120deg, var(--indigo), var(--violet) 45%, #06b6d4 100%);
+      background-size: 200% 100%;
+      box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+      transition: transform 0.2s, box-shadow 0.25s, background-position 0.5s, opacity 0.2s;
+    }
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      background-position: 100% 0;
+      box-shadow: 0 10px 28px rgba(99, 102, 241, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    }
+    .btn-primary:active { transform: translateY(1px) scale(0.98); }
+    .btn-primary svg { width: 18px; height: 18px; }
+    .btn-primary.disabled { opacity: 0.55; pointer-events: none; }
+
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px; height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+
+    /* ---------- Preview card ---------- */
+    .preview {
+      position: fixed;
+      left: 16px;
+      top: calc(var(--header-h) + 28px);
+      z-index: 15;
+      width: 176px;
+      padding: 10px;
+      border-radius: var(--radius);
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border);
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.35);
+      transition: opacity 0.45s, transform 0.45s cubic-bezier(.2, .9, .3, 1.1);
+    }
+    .preview.hidden { opacity: 0; transform: translateX(-20px) scale(0.96); pointer-events: none; }
+
+    .preview .thumb {
+      position: relative;
+      aspect-ratio: 1 / 1;
+      border-radius: 10px;
+      overflow: hidden;
+      background:
+        repeating-conic-gradient(#1a1d29 0 25%, #151823 0 50%) 50% / 16px 16px;
+    }
+    .preview .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .preview.processing .thumb::after {
+      content: '';
+      position: absolute;
+      left: 0; right: 0;
+      height: 35%;
+      background: linear-gradient(180deg, transparent, rgba(34, 211, 238, 0.45), transparent);
+      animation: scan 1.6s linear infinite;
+    }
+    .preview .label-2d {
+      position: absolute;
+      top: 6px; left: 6px;
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      background: rgba(15, 17, 23, 0.75);
+      color: #c7d2fe;
+      z-index: 1;
+    }
+    .preview .meta { margin-top: 8px; }
+    .preview .file-name {
+      font-size: 0.74rem;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 6px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 0.64rem;
+      font-weight: 600;
+      border: 1px solid transparent;
+    }
+    .chip::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .chip.processing { color: var(--cyan); background: rgba(34, 211, 238, 0.1); border-color: rgba(34, 211, 238, 0.3); }
+    .chip.processing::before { animation: pulse 1s infinite; }
+    .chip.cloud { color: var(--green); background: rgba(52, 211, 153, 0.1); border-color: rgba(52, 211, 153, 0.3); }
+    .chip.procedural { color: #c4b5fd; background: rgba(139, 92, 246, 0.12); border-color: rgba(139, 92, 246, 0.35); }
+
+    /* ---------- Toolbar ---------- */
+    .toolbar {
+      position: fixed;
+      right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 15;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 8px;
+      border-radius: var(--radius);
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border);
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.35);
+      animation: slideLeft 0.7s 0.2s cubic-bezier(.2, .9, .3, 1.1) both;
+    }
+    .tool-btn {
+      position: relative;
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      background: rgba(255, 255, 255, 0.03);
+      color: #b9bdd2;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.15s;
+    }
+    .tool-btn svg { width: 18px; height: 18px; }
+    .tool-btn:hover { background: rgba(99, 102, 241, 0.16); color: #fff; }
+    .tool-btn:active { transform: scale(0.92); }
+    .tool-btn.active {
+      color: #fff;
+      background: rgba(99, 102, 241, 0.25);
+      border-color: rgba(99, 102, 241, 0.55);
+      box-shadow: 0 0 14px rgba(99, 102, 241, 0.35);
+    }
+    .tool-btn::after {
+      content: attr(data-label);
+      position: absolute;
+      right: calc(100% + 12px);
+      top: 50%;
+      transform: translate(6px, -50%);
+      padding: 5px 9px;
+      border-radius: 7px;
+      font-size: 0.72rem;
+      font-weight: 500;
+      white-space: nowrap;
+      color: var(--text);
+      background: var(--panel-strong);
+      border: 1px solid var(--border);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    @media (hover: hover) {
+      .tool-btn:hover::after { opacity: 1; transform: translate(0, -50%); }
+    }
+
+    /* ---------- Hint ---------- */
+    .hint {
+      position: fixed;
+      left: 50%;
+      bottom: 20px;
+      transform: translateX(-50%);
+      z-index: 12;
+      max-width: calc(100% - 32px);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #c9cde0;
+      text-align: center;
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      animation: hintIn 0.8s 0.4s cubic-bezier(.2, .9, .3, 1.1) both, hintFloat 4s 1.2s ease-in-out infinite;
+    }
+    .hint svg { flex: none; width: 18px; height: 18px; color: var(--cyan); }
+
+    /* ---------- Loader ---------- */
+    .loader {
+      position: fixed;
+      inset: 0;
+      z-index: 18;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: radial-gradient(circle at center, rgba(15, 17, 23, 0.5), rgba(15, 17, 23, 0.86));
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      transition: opacity 0.4s;
+    }
+    .loader.hidden { opacity: 0; pointer-events: none; }
+    .loader-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
+      max-width: 420px;
+      padding: 32px 36px;
+      text-align: center;
+      border-radius: 22px;
+      background: var(--panel);
+      border: 1px solid var(--border-strong);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45), 0 0 80px rgba(99, 102, 241, 0.12);
+    }
+    .spinner { position: relative; width: 76px; height: 76px; }
+    .spinner::before, .spinner::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+    }
+    .spinner::before {
+      background: conic-gradient(from 0deg, transparent 0 20%, var(--indigo), var(--cyan), var(--pink));
+      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+      mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+      animation: spin 1s linear infinite;
+    }
+    .spinner::after {
+      inset: 14px;
+      border: 2px solid rgba(139, 92, 246, 0.25);
+      border-top-color: var(--violet);
+      animation: spin 1.6s linear infinite reverse;
+    }
+    .spinner .dot {
+      position: absolute;
+      inset: 32px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 18px var(--cyan);
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    .loader-text { font-size: 1rem; font-weight: 600; line-height: 1.4; }
+    .loader-sub { font-size: 0.8rem; color: var(--muted); min-height: 1.2em; line-height: 1.45; }
+    .progress {
+      width: 220px;
+      height: 4px;
+      border-radius: 4px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.07);
+    }
+    .progress span {
+      display: block;
+      height: 100%;
+      width: 40%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, var(--indigo), var(--cyan));
+      animation: indeterminate 1.4s ease-in-out infinite;
+    }
+
+    /* ---------- Toast ---------- */
+    .toast {
+      position: fixed;
+      right: 16px;
+      top: calc(var(--header-h) + 28px);
+      z-index: 25;
+      max-width: min(360px, calc(100% - 32px));
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 12px 14px;
+      border-radius: 13px;
+      font-size: 0.8rem;
+      line-height: 1.45;
+      background: var(--panel-strong);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border-strong);
+      border-left: 3px solid var(--indigo);
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
+      transform: translateY(-10px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.35s, transform 0.35s;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    .toast.success { border-left-color: var(--green); }
+    .toast.warn { border-left-color: var(--amber); }
+    .toast.error { border-left-color: var(--pink); }
+
+    /* ---------- Drop overlay ---------- */
+    .drop-overlay {
+      position: fixed;
+      inset: 12px;
+      z-index: 40;
+      display: grid;
+      place-items: center;
+      border: 2px dashed rgba(99, 102, 241, 0.7);
+      border-radius: 22px;
+      background: rgba(15, 17, 23, 0.72);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.3rem;
+      font-weight: 600;
+      color: #c7d2fe;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .drop-overlay.active { opacity: 1; }
+
+    .fatal {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      z-index: 50;
+      padding: 24px;
+      text-align: center;
+      background: var(--bg);
+      color: var(--pink);
+    }
+
+    /* ---------- Animations ---------- */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.85); } }
+    @keyframes scan { from { top: -35%; } to { top: 100%; } }
+    @keyframes floaty { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+    @keyframes dropIn { from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: none; } }
+    @keyframes slideLeft { from { opacity: 0; transform: translate(16px, -50%); } to { opacity: 1; transform: translate(0, -50%); } }
+    @keyframes hintIn { from { opacity: 0; transform: translate(-50%, 16px); } to { opacity: 1; transform: translate(-50%, 0); } }
+    @keyframes hintFloat { 0%, 100% { transform: translate(-50%, 0); } 50% { transform: translate(-50%, -4px); } }
+    @keyframes indeterminate { 0% { transform: translateX(-110%); } 100% { transform: translateX(260%); } }
+
+    /* ---------- Responsive ---------- */
+    @media (max-width: 900px) {
+      .app-header { flex-direction: column; align-items: stretch; }
+      .actions { width: 100%; }
+      .token-field { flex: 1; width: auto; min-width: 200px; }
+    }
+    @media (max-width: 560px) {
+      .app-header { top: 8px; left: 8px; right: 8px; padding: 10px 12px; gap: 10px; border-radius: 16px; }
+      h1 { font-size: 0.98rem; }
+      .logo { width: 34px; height: 34px; border-radius: 10px; }
+      .actions { flex-direction: column; align-items: stretch; gap: 10px; }
+      .token-field { min-width: 0; }
+      .btn-primary { width: 100%; }
+      .preview { width: 112px; left: 10px; padding: 7px; top: calc(var(--header-h) + 20px); }
+      .preview .file-name { font-size: 0.66rem; }
+      .toolbar { right: 10px; top: auto; bottom: 76px; transform: none; animation: none; padding: 6px; gap: 6px; }
+      .tool-btn { width: 36px; height: 36px; }
+      .toast { top: calc(var(--header-h) + 20px); right: 10px; }
+      .hint { font-size: 0.7rem; padding: 8px 14px; bottom: 14px; }
+    }
+  </style>
+</head>
+
+<body>
+  <!-- ================= Header ================= -->
+  <header class="app-header" id="app-header">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
+          <path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z" />
+          <path d="m3 7 9 5 9-5M12 12v10" />
+        </svg>
+      </div>
+      <div class="title-wrap">
+        <h1><span class="grad">2D to 3D</span> Anti-Gravity Model Studio</h1>
+        <span class="badge" id="app-badge">3D AI Viewer</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <div class="token-field">
+        <label for="hf-token">Optional: Enter Hugging Face API key for cloud TripoSR inference</label>
+        <div class="input-wrap" id="token-wrap">
+          <svg class="key-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="7.5" cy="15.5" r="4.5" /><path d="m10.7 12.3 9.3-9.3M16 7l3 3M14 9l2 2" />
+          </svg>
+          <input id="hf-token" type="password" placeholder="hf_xxxxxxxxxxxxxxxxxxxx" autocomplete="off" spellcheck="false" />
+          <button class="eye-btn" id="toggle-token" type="button" aria-label="Show or hide token">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <label class="btn-primary" for="file-input" id="upload-btn" role="button" tabindex="0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+        </svg>
+        Upload 2D Image
+      </label>
+      <input type="file" id="file-input" class="visually-hidden" accept="image/png,image/jpeg" />
+    </div>
+  </header>
+
+  <!-- ================= Viewport ================= -->
+  <main id="viewport" aria-label="Interactive 3D viewport">
+    <canvas id="scene" tabindex="0"></canvas>
+  </main>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <!-- Preview thumbnail -->
+  <aside class="preview hidden" id="preview-card" aria-live="polite">
+    <div class="thumb">
+      <span class="label-2d">2D INPUT</span>
+      <img id="preview-img" alt="Uploaded 2D image preview" />
+    </div>
+    <div class="meta">
+      <div class="file-name" id="preview-name">image.png</div>
+      <span class="chip processing" id="preview-chip">Processing…</span>
+    </div>
+  </aside>
+
+  <!-- Toolbar -->
+  <nav class="toolbar" aria-label="Viewer tools">
+    <button class="tool-btn" id="btn-reset" data-label="Reset view" aria-label="Reset view">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
+    </button>
+    <button class="tool-btn active" id="btn-autorotate" data-label="Auto-rotate" aria-label="Toggle auto-rotate">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2M3 12A9 9 0 0 1 18.5 5.8" /><path d="M21 4v5h-5M3 20v-5h5" /></svg>
+    </button>
+    <button class="tool-btn" id="btn-wireframe" data-label="Wireframe" aria-label="Toggle wireframe">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z" /><path d="m3 7 9 5 9-5M12 12v10M3 17l9-5 9 5" /></svg>
+    </button>
+    <button class="tool-btn" id="btn-demo" data-label="Restore demo model" aria-label="Restore demo model">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4 6.8 19.1l1-5.8L3.5 9.2l5.9-.9L12 3Z" /></svg>
+    </button>
+  </nav>
+
+  <!-- Loader -->
+  <div class="loader hidden" id="loader" role="status" aria-live="assertive">
+    <div class="loader-card">
+      <div class="spinner"><span class="dot"></span></div>
+      <p class="loader-text" id="loader-text">Analyzing image &amp; reconstructing 3D mesh...</p>
+      <div class="progress"><span></span></div>
+      <p class="loader-sub" id="loader-sub"></p>
+    </div>
+  </div>
+
+  <!-- Hint -->
+  <div class="hint" id="hint">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="6" y="2" width="12" height="20" rx="6" /><path d="M12 6v4" />
+    </svg>
+    <span>Drag to rotate • Pinch/Scroll to zoom • Right-click to pan</span>
+  </div>
+
+  <div class="toast" id="toast" role="alert"></div>
+  <div class="drop-overlay" id="drop-overlay">Drop your 2D image to generate a 3D model</div>
+
+  <!-- =====================================================
+       Three.js r128 + addons are loaded by the dependency
+       loader at the bottom of the page (with CDN mirrors).
+  ===================================================== -->
+  <script>
+  // Global diagnostics: log failed remote assets / unhandled promise errors instead of failing silently.
+  window.addEventListener('error', (e) => {
+    const t = e.target;
+    if (t && t !== window && (t.src || t.href)) console.warn('[asset] Failed to load resource:', t.src || t.href);
+  }, true);
+  window.addEventListener('unhandledrejection', (e) => {
+    console.error('[app] Unhandled promise rejection:', e.reason);
+    e.preventDefault();
+  });
+  </script>
+
+  <script>
+  window.__startStudio = () => {
+    'use strict';
+
+    if (typeof THREE === 'undefined' || !THREE.OrbitControls) {
+      document.body.insertAdjacentHTML('beforeend',
+        '<div class="fatal">Could not load Three.js from the CDN. Please check your internet connection and reload.</div>');
+      return;
+    }
+
+    /* =====================================================
+       Constants & DOM
+    ===================================================== */
+    const HF_ENDPOINT = 'https://api-inference.huggingface.co/models/stabilityai/TripoSR';
+    const HF_TIMEOUT_MS = 90000;
+    const GROUND_Y = -1.6;
+    const MODEL_SIZE = 2.6;
+    const DEFAULT_CAM = new THREE.Vector3(3.6, 2.0, 5.4);
+    const DEFAULT_TARGET = new THREE.Vector3(0, 0, 0);
+
+    const $ = (id) => document.getElementById(id);
+    const els = {
+      header: $('app-header'),
+      canvas: $('scene'),
+      fileInput: $('file-input'),
+      uploadBtn: $('upload-btn'),
+      token: $('hf-token'),
+      tokenWrap: $('token-wrap'),
+      toggleToken: $('toggle-token'),
+      preview: $('preview-card'),
+      previewImg: $('preview-img'),
+      previewName: $('preview-name'),
+      previewChip: $('preview-chip'),
+      loader: $('loader'),
+      loaderText: $('loader-text'),
+      loaderSub: $('loader-sub'),
+      toast: $('toast'),
+      drop: $('drop-overlay'),
+      btnReset: $('btn-reset'),
+      btnAuto: $('btn-autorotate'),
+      btnWire: $('btn-wireframe'),
+      btnDemo: $('btn-demo'),
+    };
+
+    /* =====================================================
+       Renderer / Scene / Camera / Controls
+    ===================================================== */
+    const renderer = new THREE.WebGLRenderer({ canvas: els.canvas, antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0f1117);
+    scene.fog = new THREE.Fog(0x0f1117, 11, 28);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.05, 100);
+    camera.position.copy(DEFAULT_CAM);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.07;
+    controls.rotateSpeed = 0.8;
+    controls.zoomSpeed = 0.9;
+    controls.panSpeed = 0.8;
+    controls.screenSpacePanning = true;
+    controls.enablePan = true;
+    controls.minDistance = 1.8;
+    controls.maxDistance = 18;
+    controls.minPolarAngle = 0;
+    controls.maxPolarAngle = Math.PI; // full 360° freedom
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 1.4;
+    controls.target.copy(DEFAULT_TARGET);
+    controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+    controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+    controls.update();
+
+    let camTween = null;
+    controls.addEventListener('start', () => {
+      camTween = null;
+      if (controls.autoRotate) setAutoRotate(false);
+    });
+
+    /* =====================================================
+       Studio lighting
+    ===================================================== */
+    scene.add(new THREE.AmbientLight(0xffffff, 0.32));
+    scene.add(new THREE.HemisphereLight(0xc7d2fe, 0x15171f, 0.4));
+
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.45);
+    keyLight.position.set(4.5, 8, 5);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(2048, 2048);
+    keyLight.shadow.camera.near = 0.5;
+    keyLight.shadow.camera.far = 25;
+    keyLight.shadow.camera.left = -5;
+    keyLight.shadow.camera.right = 5;
+    keyLight.shadow.camera.top = 5;
+    keyLight.shadow.camera.bottom = -5;
+    keyLight.shadow.bias = -0.0005;
+    keyLight.shadow.normalBias = 0.02;
+    scene.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(0x6366f1, 0.85); // indigo fill
+    fillLight.position.set(-6, 2.5, -3);
+    scene.add(fillLight);
+
+    const rimLight = new THREE.PointLight(0x38bdf8, 0.7, 22); // subtle blue rim
+    rimLight.position.set(0, 3.5, -6);
+    scene.add(rimLight);
+
+    /* =====================================================
+       Floor: grid, shadow catcher, glow
+    ===================================================== */
+    const grid = new THREE.GridHelper(30, 60, 0x6366f1, 0x272b3a);
+    grid.position.y = GROUND_Y;
+    grid.material.transparent = true;
+    grid.material.opacity = 0.32;
+    grid.material.depthWrite = false;
+    scene.add(grid);
+
+    const shadowCatcher = new THREE.Mesh(
+      new THREE.PlaneGeometry(30, 30),
+      new THREE.ShadowMaterial({ opacity: 0.38 })
+    );
+    shadowCatcher.rotation.x = -Math.PI / 2;
+    shadowCatcher.position.y = GROUND_Y + 0.002;
+    shadowCatcher.receiveShadow = true;
+    scene.add(shadowCatcher);
+
+    function radialTexture(inner, outer) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 256;
+      const ctx = c.getContext('2d');
+      const g = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+      g.addColorStop(0, inner);
+      g.addColorStop(1, outer);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 256, 256);
+      return new THREE.CanvasTexture(c);
+    }
+
+    const glow = new THREE.Mesh(
+      new THREE.PlaneGeometry(6, 6),
+      new THREE.MeshBasicMaterial({
+        map: radialTexture('rgba(99,102,241,0.45)', 'rgba(99,102,241,0)'),
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      })
+    );
+    glow.rotation.x = -Math.PI / 2;
+    glow.position.y = GROUND_Y + 0.004;
+    scene.add(glow);
+
+    const ringA = new THREE.Mesh(
+      new THREE.RingGeometry(1.55, 1.59, 128),
+      new THREE.MeshBasicMaterial({ color: 0x818cf8, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide })
+    );
+    ringA.rotation.x = -Math.PI / 2;
+    ringA.position.y = GROUND_Y + 0.006;
+    scene.add(ringA);
+
+    const ringB = new THREE.Mesh(
+      new THREE.RingGeometry(2.2, 2.215, 128, 1, 0, Math.PI * 1.5),
+      new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide })
+    );
+    ringB.rotation.x = -Math.PI / 2;
+    ringB.position.y = GROUND_Y + 0.006;
+    scene.add(ringB);
+
+    // Anti-gravity dust particles rising slowly
+    const PARTICLES = 260;
+    const pGeo = new THREE.BufferGeometry();
+    const pPos = new Float32Array(PARTICLES * 3);
+    const pSpeed = new Float32Array(PARTICLES);
+    for (let i = 0; i < PARTICLES; i++) {
+      const r = 1.2 + Math.random() * 6;
+      const a = Math.random() * Math.PI * 2;
+      pPos[i * 3] = Math.cos(a) * r;
+      pPos[i * 3 + 1] = GROUND_Y + Math.random() * 6;
+      pPos[i * 3 + 2] = Math.sin(a) * r;
+      pSpeed[i] = 0.08 + Math.random() * 0.25;
+    }
+    pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+    const particles = new THREE.Points(pGeo, new THREE.PointsMaterial({
+      size: 0.035, color: 0xa5b4fc, transparent: true, opacity: 0.55,
+      depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+    }));
+    scene.add(particles);
+
+    /* =====================================================
+       Model management
+    ===================================================== */
+    const floatRoot = new THREE.Group(); // gentle anti-gravity hover
+    scene.add(floatRoot);
+    let currentWrapper = null;
+    let wireframeOn = false;
+
+    function disposeObject(obj) {
+      obj.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+        mats.forEach((m) => {
+          ['map', 'alphaMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap'].forEach((k) => m[k] && m[k].dispose());
+          m.dispose();
+        });
+        if (o.customDepthMaterial) o.customDepthMaterial.dispose();
+      });
+    }
+
+    function fitToView(obj, targetSize = MODEL_SIZE) {
+      obj.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(obj);
+      if (box.isEmpty()) return;
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const s = targetSize / maxDim;
+      obj.scale.multiplyScalar(s);
+      obj.position.sub(center.multiplyScalar(s));
+    }
+
+    /** Safe entry point: never throws. Falls back to the default model if mounting fails. */
+    function setModel(obj) {
+      try {
+        if (!obj || !obj.isObject3D) throw new Error('Invalid 3D object');
+        mountModel(obj);
+        return true;
+      } catch (err) {
+        console.error('[model] Failed to display model, falling back to default:', err);
+        try { mountModel(createPlaceholder()); } catch (e2) { console.error('[model] Default model also failed:', e2); }
+        showToast('That model could not be displayed. Restored the default 3D model.', 'warn');
+        return false;
+      }
+    }
+
+    function mountModel(obj) {
+      if (currentWrapper) {
+        floatRoot.remove(currentWrapper);
+        disposeObject(currentWrapper);
+      }
+      obj.traverse((o) => {
+        if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+      });
+      fitToView(obj);
+      const wrapper = new THREE.Group();
+      wrapper.add(obj);
+      wrapper.userData.spawn = 0;
+      wrapper.userData.animate = obj.userData.animate || null;
+      wrapper.scale.setScalar(0.001);
+      floatRoot.add(wrapper);
+      currentWrapper = wrapper;
+      applyWireframe();
+    }
+
+    function applyWireframe() {
+      if (!currentWrapper) return;
+      currentWrapper.traverse((o) => {
+        if (!o.isMesh) return;
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => {
+          if ('wireframe' in m) { m.wireframe = wireframeOn; m.needsUpdate = true; }
+        });
+      });
+    }
+
+    /* =====================================================
+       Placeholder: low-poly anti-gravity crystal
+    ===================================================== */
+    function createPlaceholder() {
+      const group = new THREE.Group();
+
+      const geo = new THREE.IcosahedronGeometry(1, 1);
+      const pos = geo.attributes.position;
+      const jitter = new Map();
+      const v = new THREE.Vector3();
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        const key = `${v.x.toFixed(3)}|${v.y.toFixed(3)}|${v.z.toFixed(3)}`;
+        if (!jitter.has(key)) jitter.set(key, 0.84 + Math.random() * 0.3);
+        v.multiplyScalar(jitter.get(key));
+        pos.setXYZ(i, v.x, v.y * 1.18, v.z);
+      }
+
+      const cA = new THREE.Color(0x4f46e5), cB = new THREE.Color(0x22d3ee);
+      const cC = new THREE.Color(0xec4899), cD = new THREE.Color(0x8b5cf6);
+      const colors = new Float32Array(pos.count * 3);
+      const col = new THREE.Color();
+      for (let f = 0; f < pos.count; f += 3) {
+        const cy = (pos.getY(f) + pos.getY(f + 1) + pos.getY(f + 2)) / 3;
+        const t = THREE.MathUtils.clamp((cy + 1.1) / 2.2, 0, 1);
+        col.copy(cA).lerp(cB, t);
+        const r = Math.random();
+        if (r < 0.12) col.lerp(cC, 0.7);
+        else if (r < 0.28) col.lerp(cD, 0.6);
+        col.offsetHSL(0, 0, (Math.random() - 0.5) * 0.1);
+        const lin = col.clone().convertSRGBToLinear();
+        for (let k = 0; k < 3; k++) {
+          colors[(f + k) * 3] = lin.r;
+          colors[(f + k) * 3 + 1] = lin.g;
+          colors[(f + k) * 3 + 2] = lin.b;
+        }
+      }
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      geo.computeVertexNormals();
+
+      const core = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        vertexColors: true, flatShading: true, roughness: 0.3, metalness: 0.35,
+      }));
+      const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(geo, 1),
+        new THREE.LineBasicMaterial({ color: 0xc7d2fe, transparent: true, opacity: 0.25 })
+      );
+      core.add(edges);
+      group.add(core);
+
+      const ringMat = (c) => new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.55, roughness: 0.3, metalness: 0.6 });
+      const tilt = new THREE.Group();
+      tilt.rotation.x = Math.PI / 2.4;
+      group.add(tilt);
+      const ring1 = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.022, 12, 180), ringMat(0x6366f1));
+      tilt.add(ring1);
+      const ring2 = new THREE.Mesh(new THREE.TorusGeometry(1.85, 0.013, 12, 180), ringMat(0x22d3ee));
+      ring2.rotation.set(0.5, 0.35, 0);
+      group.add(ring2);
+
+      const orbit = new THREE.Group();
+      tilt.add(orbit);
+      const satColors = [0x22d3ee, 0xec4899, 0x8b5cf6, 0x6366f1, 0xf0abfc, 0x38bdf8, 0xa78bfa];
+      const sats = [];
+      for (let i = 0; i < 7; i++) {
+        const g = i % 2 ? new THREE.OctahedronGeometry(0.11) : new THREE.TetrahedronGeometry(0.13);
+        const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+          color: satColors[i], emissive: satColors[i], emissiveIntensity: 0.35, flatShading: true, roughness: 0.3, metalness: 0.4,
+        }));
+        const a = (i / 7) * Math.PI * 2;
+        m.position.set(Math.cos(a) * 1.6, Math.sin(a) * 1.6, Math.sin(a * 3) * 0.12);
+        orbit.add(m);
+        sats.push(m);
+      }
+
+      group.userData.animate = (t, dt) => {
+        core.rotation.y += dt * 0.35;
+        core.rotation.x = Math.sin(t * 0.4) * 0.22;
+        orbit.rotation.z += dt * 0.45;
+        ring1.rotation.z -= dt * 0.15;
+        ring2.rotation.z -= dt * 0.25;
+        sats.forEach((s, i) => { s.rotation.x += dt * (1 + i * 0.1); s.rotation.y += dt * 1.3; });
+      };
+      return group;
+    }
+
+    /* =====================================================
+       Procedural reconstruction (fallback)
+       - Segments the subject from the background
+       - Inflates the silhouette via a distance transform
+       - Projects the photo onto the front (and mirrored back)
+    ===================================================== */
+    function majorityFilter(mask, w, h, iterations) {
+      let src = mask;
+      for (let it = 0; it < iterations; it++) {
+        const dst = new Uint8Array(w * h);
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            let c = 0;
+            for (let dy = -1; dy <= 1; dy++) {
+              const yy = y + dy;
+              if (yy < 0 || yy >= h) continue;
+              for (let dx = -1; dx <= 1; dx++) {
+                const xx = x + dx;
+                if (xx >= 0 && xx < w) c += src[yy * w + xx];
+              }
+            }
+            dst[y * w + x] = c >= 5 ? 1 : 0;
+          }
+        }
+        src = dst;
+      }
+      return src;
+    }
+
+    function largestComponent(mask, w, h) {
+      const N = w * h;
+      const label = new Int32Array(N);
+      const stack = new Int32Array(N);
+      let best = 0, bestSize = 0, cur = 0;
+      for (let i = 0; i < N; i++) {
+        if (!mask[i] || label[i]) continue;
+        cur++;
+        let sp = 0, size = 0;
+        stack[sp++] = i; label[i] = cur;
+        while (sp) {
+          const p = stack[--sp]; size++;
+          const x = p % w, y = (p / w) | 0;
+          const nb = [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, y > 0 ? p - w : -1, y < h - 1 ? p + w : -1];
+          for (const q of nb) if (q >= 0 && mask[q] && !label[q]) { label[q] = cur; stack[sp++] = q; }
+        }
+        if (size > bestSize) { bestSize = size; best = cur; }
+      }
+      const out = new Uint8Array(N);
+      for (let i = 0; i < N; i++) out[i] = label[i] === best && best ? 1 : 0;
+      return out;
+    }
+
+    function fillHoles(mask, w, h) {
+      const N = w * h;
+      const outside = new Uint8Array(N);
+      const stack = new Int32Array(N);
+      let sp = 0;
+      const seed = (i) => { if (!mask[i] && !outside[i]) { outside[i] = 1; stack[sp++] = i; } };
+      for (let x = 0; x < w; x++) { seed(x); seed((h - 1) * w + x); }
+      for (let y = 0; y < h; y++) { seed(y * w); seed(y * w + w - 1); }
+      while (sp) {
+        const p = stack[--sp];
+        const x = p % w, y = (p / w) | 0;
+        if (x > 0) seed(p - 1);
+        if (x < w - 1) seed(p + 1);
+        if (y > 0) seed(p - w);
+        if (y < h - 1) seed(p + w);
+      }
+      const out = new Uint8Array(N);
+      for (let i = 0; i < N; i++) out[i] = outside[i] ? 0 : 1;
+      return out;
+    }
+
+    function closeMask(mask, w, h, iterations = 2) {
+      let src = mask;
+      for (let it = 0; it < iterations; it++) {
+        const dilated = new Uint8Array(w * h);
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            let on = 0;
+            for (let dy = -1; dy <= 1 && !on; dy++) for (let dx = -1; dx <= 1; dx++) {
+              const xx = x + dx, yy = y + dy;
+              if (xx >= 0 && yy >= 0 && xx < w && yy < h && src[yy * w + xx]) { on = 1; break; }
+            }
+            dilated[y * w + x] = on;
+          }
+        }
+        const eroded = new Uint8Array(w * h);
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            let on = 1;
+            for (let dy = -1; dy <= 1 && on; dy++) for (let dx = -1; dx <= 1; dx++) {
+              const xx = x + dx, yy = y + dy;
+              if (xx < 0 || yy < 0 || xx >= w || yy >= h || !dilated[yy * w + xx]) { on = 0; break; }
+            }
+            eroded[y * w + x] = on;
+          }
+        }
+        src = eroded;
+      }
+      return src;
+    }
+
+    function computeMask(data, w, h) {
+      const N = w * h;
+      let mask = new Uint8Array(N);
+
+      let transparentCount = 0;
+      for (let i = 0; i < N; i++) if (data[i * 4 + 3] < 200) transparentCount++;
+
+      if (transparentCount > N * 0.02) {
+        // PNG with alpha → use alpha channel directly
+        for (let i = 0; i < N; i++) mask[i] = data[i * 4 + 3] >= 128 ? 1 : 0;
+      } else {
+        // Estimate background colour from the border, flood-fill similar pixels from the edges
+        const border = [];
+        for (let x = 0; x < w; x++) { border.push(x, (h - 1) * w + x); }
+        for (let y = 1; y < h - 1; y++) { border.push(y * w, y * w + w - 1); }
+        let r = 0, g = 0, b = 0;
+        for (const i of border) { r += data[i * 4]; g += data[i * 4 + 1]; b += data[i * 4 + 2]; }
+        r /= border.length; g /= border.length; b /= border.length;
+        let variance = 0;
+        for (const i of border) {
+          const dr = data[i * 4] - r, dg = data[i * 4 + 1] - g, db = data[i * 4 + 2] - b;
+          variance += dr * dr + dg * dg + db * db;
+        }
+        const std = Math.sqrt(variance / border.length);
+        const tol = THREE.MathUtils.clamp(26 + std * 1.1, 30, 95);
+        const tol2 = tol * tol;
+        const similar = (i) => {
+          const dr = data[i * 4] - r, dg = data[i * 4 + 1] - g, db = data[i * 4 + 2] - b;
+          return dr * dr + dg * dg + db * db < tol2;
+        };
+        const bg = new Uint8Array(N);
+        const stack = new Int32Array(N);
+        let sp = 0;
+        const visit = (j) => { if (!bg[j] && similar(j)) { bg[j] = 1; stack[sp++] = j; } };
+        for (const i of border) visit(i);
+        while (sp) {
+          const p = stack[--sp];
+          const x = p % w, y = (p / w) | 0;
+          if (x > 0) visit(p - 1);
+          if (x < w - 1) visit(p + 1);
+          if (y > 0) visit(p - w);
+          if (y < h - 1) visit(p + w);
+        }
+        for (let i = 0; i < N; i++) mask[i] = bg[i] ? 0 : 1;
+      }
+
+      mask = majorityFilter(mask, w, h, 2);
+      mask = largestComponent(mask, w, h);
+      mask = fillHoles(mask, w, h);
+      mask = closeMask(mask, w, h, 2);
+
+      let count = 0;
+      for (let i = 0; i < N; i++) count += mask[i];
+      const coverage = count / N;
+      if (coverage > 0.06 && coverage < 0.94) return { mask, segmented: true };
+
+      // Segmentation unreliable → rounded "puffy photo tile" silhouette
+      const tile = new Uint8Array(N);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const nx = ((x + 0.5) / w) * 2 - 1, ny = ((y + 0.5) / h) * 2 - 1;
+          tile[y * w + x] = Math.pow(Math.abs(nx), 5) + Math.pow(Math.abs(ny), 5) <= Math.pow(0.94, 5) ? 1 : 0;
+        }
+      }
+      return { mask: tile, segmented: false };
+    }
+
+    function distanceTransform(mask, w, h) {
+      const N = w * h;
+      const d = new Float32Array(N);
+      const INF = 1e9;
+      for (let i = 0; i < N; i++) d[i] = mask[i] ? INF : 0;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = y * w + x;
+          if (d[i] === 0) continue;
+          let v = d[i];
+          if (x === 0 || y === 0) v = Math.min(v, 3);
+          if (x > 0) v = Math.min(v, d[i - 1] + 3);
+          if (y > 0) {
+            v = Math.min(v, d[i - w] + 3);
+            if (x > 0) v = Math.min(v, d[i - w - 1] + 4);
+            if (x < w - 1) v = Math.min(v, d[i - w + 1] + 4);
+          }
+          d[i] = v;
+        }
+      }
+      for (let y = h - 1; y >= 0; y--) {
+        for (let x = w - 1; x >= 0; x--) {
+          const i = y * w + x;
+          if (d[i] === 0) continue;
+          let v = d[i];
+          if (x === w - 1 || y === h - 1) v = Math.min(v, 3);
+          if (x < w - 1) v = Math.min(v, d[i + 1] + 3);
+          if (y < h - 1) {
+            v = Math.min(v, d[i + w] + 3);
+            if (x < w - 1) v = Math.min(v, d[i + w + 1] + 4);
+            if (x > 0) v = Math.min(v, d[i + w - 1] + 4);
+          }
+          d[i] = v;
+        }
+      }
+      let max = 0;
+      for (let i = 0; i < N; i++) { d[i] /= 3; if (d[i] > max) max = d[i]; }
+      return { dist: d, max: max || 1 };
+    }
+
+    function buildProceduralModel(img) {
+      const iw = img.naturalWidth || img.width;
+      const ih = img.naturalHeight || img.height;
+
+      // --- Analysis grid ---
+      const RES = 200;
+      const aspect = iw / ih;
+      const aw = aspect >= 1 ? RES : Math.max(16, Math.round(RES * aspect));
+      const ah = aspect >= 1 ? Math.max(16, Math.round(RES / aspect)) : RES;
+      const aCan = document.createElement('canvas');
+      aCan.width = aw; aCan.height = ah;
+      const aCtx = aCan.getContext('2d', { willReadFrequently: true });
+      aCtx.drawImage(img, 0, 0, aw, ah);
+      const data = aCtx.getImageData(0, 0, aw, ah).data;
+
+      const { mask, segmented } = computeMask(data, aw, ah);
+      const { dist, max: dMax } = distanceTransform(mask, aw, ah);
+
+      // Smoothed luminance for subtle surface relief
+      const N = aw * ah;
+      const lumRaw = new Float32Array(N);
+      for (let i = 0; i < N; i++) lumRaw[i] = (0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]) / 255;
+      const lum = new Float32Array(N);
+      for (let y = 0; y < ah; y++) {
+        for (let x = 0; x < aw; x++) {
+          let s = 0, c = 0;
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx, yy = y + dy;
+            if (xx >= 0 && yy >= 0 && xx < aw && yy < ah) { s += lumRaw[yy * aw + xx]; c++; }
+          }
+          lum[y * aw + x] = s / c;
+        }
+      }
+
+      // --- Texture & alpha map (projected texture mapping) ---
+      const TEX_MAX = 1024;
+      const ts = Math.min(1, TEX_MAX / Math.max(iw, ih));
+      const tw = Math.max(2, Math.round(iw * ts)), th = Math.max(2, Math.round(ih * ts));
+      const tCan = document.createElement('canvas');
+      tCan.width = tw; tCan.height = th;
+      tCan.getContext('2d').drawImage(img, 0, 0, tw, th);
+      const colorTex = new THREE.CanvasTexture(tCan);
+      colorTex.encoding = THREE.sRGBEncoding;
+      colorTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+      const mCan = document.createElement('canvas');
+      mCan.width = aw; mCan.height = ah;
+      const mCtx = mCan.getContext('2d');
+      const mImg = mCtx.createImageData(aw, ah);
+      for (let i = 0; i < N; i++) {
+        const v = mask[i] ? 255 : 0;
+        mImg.data[i * 4] = mImg.data[i * 4 + 1] = mImg.data[i * 4 + 2] = v;
+        mImg.data[i * 4 + 3] = 255;
+      }
+      mCtx.putImageData(mImg, 0, 0);
+      const alphaCan = document.createElement('canvas');
+      alphaCan.width = tw; alphaCan.height = th;
+      const alphaCtx = alphaCan.getContext('2d');
+      alphaCtx.imageSmoothingEnabled = true;
+      alphaCtx.imageSmoothingQuality = 'high';
+      alphaCtx.filter = `blur(${Math.max(1, (tw / aw) * 0.6).toFixed(1)}px)`;
+      alphaCtx.drawImage(mCan, 0, 0, tw, th);
+      const alphaTex = new THREE.CanvasTexture(alphaCan);
+
+      // --- Geometry: inflated front + back shells ---
+      const maxSide = Math.max(aw, ah);
+      const worldW = (aw / maxSide) * 2;
+      const worldH = (ah / maxSide) * 2;
+      const depth = segmented ? 0.3 : 0.12;
+      const relief = segmented ? 0.035 : 0.07;
+
+      const include = new Uint8Array(N); // mask dilated by 1px; alphaTest trims the exact contour
+      for (let y = 0; y < ah; y++) {
+        for (let x = 0; x < aw; x++) {
+          let on = 0;
+          for (let dy = -1; dy <= 1 && !on; dy++) for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx, yy = y + dy;
+            if (xx >= 0 && yy >= 0 && xx < aw && yy < ah && mask[yy * aw + xx]) { on = 1; break; }
+          }
+          include[y * aw + x] = on;
+        }
+      }
+
+      const idx = new Int32Array(N).fill(-1);
+      let count = 0;
+      for (let i = 0; i < N; i++) if (include[i]) idx[i] = count++;
+
+      const positions = new Float32Array(count * 2 * 3);
+      const uvs = new Float32Array(count * 2 * 2);
+      for (let y = 0; y < ah; y++) {
+        for (let x = 0; x < aw; x++) {
+          const i = y * aw + x;
+          const k = idx[i];
+          if (k < 0) continue;
+          const u = (x + 0.5) / aw, v = (y + 0.5) / ah;
+          const px = (u - 0.5) * worldW, py = (0.5 - v) * worldH;
+          const t = mask[i] ? Math.min(1, dist[i] / dMax) : 0;
+          let profile;
+          if (segmented) profile = Math.sqrt(Math.max(0, 1 - (1 - t) * (1 - t)));   // round "inflated" body
+          else { const e = Math.min(1, t / 0.12); profile = 1 - Math.pow(1 - e, 3); } // flat-topped thick tile
+          const detail = mask[i] ? (lum[i] - 0.5) * relief * Math.min(1, t * 4) : 0;
+          const zf = depth * profile + detail;
+          const zb = -depth * profile * 0.82;
+
+          positions.set([px, py, zf], k * 3);
+          positions.set([px, py, zb], (k + count) * 3);
+          uvs.set([u, 1 - v], k * 2);
+          uvs.set([u, 1 - v], (k + count) * 2);
+        }
+      }
+
+      const front = [], back = [];
+      for (let y = 0; y < ah - 1; y++) {
+        for (let x = 0; x < aw - 1; x++) {
+          const a = idx[y * aw + x], b = idx[y * aw + x + 1];
+          const c = idx[(y + 1) * aw + x], d = idx[(y + 1) * aw + x + 1];
+          if (a < 0 || b < 0 || c < 0 || d < 0) continue;
+          front.push(a, c, b, b, c, d);
+          back.push(a + count, b + count, c + count, b + count, d + count, c + count);
+        }
+      }
+
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+      geo.setIndex(new THREE.BufferAttribute(new Uint32Array(front.concat(back)), 1));
+      geo.addGroup(0, front.length, 0);
+      geo.addGroup(front.length, back.length, 1);
+      geo.computeVertexNormals();
+
+      const frontMat = new THREE.MeshStandardMaterial({
+        map: colorTex, alphaMap: alphaTex, alphaTest: 0.5,
+        roughness: 0.55, metalness: 0.05, side: THREE.DoubleSide,
+      });
+      const backMat = new THREE.MeshStandardMaterial({
+        map: colorTex, alphaMap: alphaTex, alphaTest: 0.5, color: 0xa3a8c3,
+        roughness: 0.7, metalness: 0.05, side: THREE.DoubleSide,
+      });
+
+      const mesh = new THREE.Mesh(geo, [frontMat, backMat]);
+      mesh.customDepthMaterial = new THREE.MeshDepthMaterial({
+        depthPacking: THREE.RGBADepthPacking, alphaMap: alphaTex, alphaTest: 0.5, side: THREE.DoubleSide,
+      });
+
+      const group = new THREE.Group();
+      group.add(mesh);
+      return { object: group, segmented };
+    }
+
+    /* =====================================================
+       Cloud inference (Hugging Face TripoSR)
+    ===================================================== */
+    async function tryCloudInference(file, token) {
+      const form = new FormData();
+      form.append('file', file, file.name || 'image.png');
+
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), HF_TIMEOUT_MS);
+      try {
+        const res = await fetch(HF_ENDPOINT, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: form,
+          signal: ctrl.signal,
+        });
+        if (!res.ok) {
+          let msg = `HTTP ${res.status}`;
+          try { const j = await res.json(); if (j && j.error) msg += ` – ${j.error}`; } catch (_) { /* ignore */ }
+          throw new Error(msg);
+        }
+        const ct = (res.headers.get('content-type') || '').toLowerCase();
+        if (ct.includes('application/json') && !ct.includes('gltf')) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j.error || 'Model returned JSON instead of a mesh');
+        }
+        const buf = await res.arrayBuffer();
+        if (!buf.byteLength) throw new Error('Empty response');
+        return await parseMeshBuffer(buf);
+      } catch (err) {
+        if (err.name === 'AbortError') throw new Error('Request timed out');
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    function parseGLTF(data) {
+      return new Promise((resolve, reject) => {
+        if (!THREE.GLTFLoader) return reject(new Error('GLTFLoader unavailable (CDN failed)'));
+        try {
+          new THREE.GLTFLoader().parse(data, '',
+            (gltf) => (gltf && gltf.scene ? resolve(gltf.scene) : reject(new Error('glTF has no scene'))),
+            (err) => reject(err instanceof Error ? err : new Error('glTF parse error')));
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }
+
+    async function parseMeshBuffer(buf) {
+      const head = new TextDecoder().decode(new Uint8Array(buf, 0, Math.min(4, buf.byteLength)));
+      if (head === 'glTF') return parseGLTF(buf);
+      const text = new TextDecoder().decode(buf);
+      const trimmed = text.trimStart();
+      // Storage/CDN error pages (e.g. Azure "BlobNotFound" XML) are not meshes.
+      if (trimmed.startsWith('<')) {
+        const code = (trimmed.match(/<Code>([^<]+)<\/Code>/i) || [])[1];
+        throw new Error(code ? `Remote storage error: ${code}` : 'Received HTML/XML instead of a mesh');
+      }
+      if (trimmed.startsWith('{')) return parseGLTF(text);
+      if (/^\s*v\s+-?[\d.]/m.test(text) && /^\s*f\s+\d/m.test(text)) {
+        if (!THREE.OBJLoader) throw new Error('OBJLoader unavailable (CDN failed)');
+        const obj = new THREE.OBJLoader().parse(text);
+        obj.traverse((o) => {
+          if (!o.isMesh) return;
+          const hasColors = !!o.geometry.attributes.color;
+          o.material = new THREE.MeshStandardMaterial({
+            color: hasColors ? 0xffffff : 0xd6daf0, vertexColors: hasColors,
+            roughness: 0.55, metalness: 0.05, side: THREE.DoubleSide,
+          });
+          if (!o.geometry.attributes.normal) o.geometry.computeVertexNormals();
+        });
+        return obj;
+      }
+      throw new Error('Unsupported model format returned');
+    }
+
+    /* =====================================================
+       Remote model loading (GLTFLoader / OBJLoader) with
+       onError + timeout → falls back to the default model.
+       Usage: index.html?model=https://example.com/model.glb
+    ===================================================== */
+    function loadRemoteModel(url, timeoutMs = 30000) {
+      return new Promise((resolve, reject) => {
+        const isObj = /\.obj(\?|#|$)/i.test(url);
+        const Loader = isObj ? THREE.OBJLoader : THREE.GLTFLoader;
+        if (!Loader) return reject(new Error(`${isObj ? 'OBJ' : 'GLTF'}Loader unavailable`));
+        let settled = false;
+        const finish = (fn, val) => { if (settled) return; settled = true; clearTimeout(timer); fn(val); };
+        const timer = setTimeout(() => finish(reject, new Error('Timed out loading remote model')), timeoutMs);
+        try {
+          new Loader().load(
+            url,
+            (res) => finish(resolve, isObj ? res : res.scene),
+            undefined,
+            (err) => {
+              const status = err && err.target && err.target.status;
+              finish(reject, new Error(status
+                ? `HTTP ${status}${status === 404 ? ' (asset not found / BlobNotFound)' : ''}`
+                : (err && err.message) || 'Network or CORS error'));
+            }
+          );
+        } catch (err) {
+          finish(reject, err);
+        }
+      });
+    }
+
+    async function loadModelFromUrl(url) {
+      showLoader('Loading remote 3D model...', url);
+      try {
+        const model = await loadRemoteModel(url);
+        if (setModel(model)) { resetView(); showToast('Remote model loaded.', 'success'); }
+      } catch (err) {
+        console.error('[asset] Remote model failed, using default model:', url, err);
+        setModel(createPlaceholder());
+        showToast(`Remote model unavailable (${err.message}). Showing the default model.`, 'warn', 6000);
+      } finally {
+        hideLoader();
+      }
+    }
+
+    /* =====================================================
+       UI helpers
+    ===================================================== */
+    let toastTimer = null;
+    function showToast(msg, type = 'info', ms = 4200) {
+      els.toast.textContent = msg;
+      els.toast.className = `toast show ${type}`;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { els.toast.className = `toast ${type}`; }, ms);
+    }
+
+    function showLoader(text, sub = '') {
+      els.loaderText.textContent = text;
+      els.loaderSub.textContent = sub;
+      els.loader.classList.remove('hidden');
+    }
+    const setLoaderSub = (sub) => { els.loaderSub.textContent = sub; };
+    const hideLoader = () => els.loader.classList.add('hidden');
+
+    function setChip(state, text) {
+      els.previewChip.className = `chip ${state}`;
+      els.previewChip.textContent = text;
+      els.preview.classList.toggle('processing', state === 'processing');
+    }
+
+    function setAutoRotate(on) {
+      controls.autoRotate = on;
+      els.btnAuto.classList.toggle('active', on);
+    }
+
+    function resetView() {
+      camTween = { pos: DEFAULT_CAM.clone(), target: DEFAULT_TARGET.clone() };
+    }
+
+    const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+    const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+    function loadImage(url) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Could not decode image'));
+        img.src = url;
+      });
+    }
+
+    /* =====================================================
+       Upload → 3D flow
+    ===================================================== */
+    let busy = false;
+    let previewURL = null;
+
+    async function handleFile(file) {
+      if (!file) return;
+      if (!/^image\/(png|jpe?g)$/i.test(file.type)) {
+        showToast('Please choose a JPG or PNG image.', 'error');
+        return;
+      }
+      if (busy) { showToast('Hold on — still reconstructing the previous image.', 'warn'); return; }
+      busy = true;
+      els.uploadBtn.classList.add('disabled');
+
+      if (previewURL) URL.revokeObjectURL(previewURL);
+      previewURL = URL.createObjectURL(file);
+      els.previewImg.src = previewURL;
+      els.previewName.textContent = file.name || 'image';
+      els.previewName.title = file.name || '';
+      setChip('processing', 'Processing…');
+      els.preview.classList.remove('hidden');
+
+      showLoader('Analyzing image & reconstructing 3D mesh...', 'Reading image…');
+
+      try {
+        const img = await loadImage(previewURL);
+        const token = els.token.value.trim();
+        let model = null;
+        let mode = 'procedural';
+        let segmented = true;
+
+        if (token) {
+          setLoaderSub('Uploading to Hugging Face TripoSR (cloud inference)…');
+          try {
+            model = await tryCloudInference(file, token);
+            mode = 'cloud';
+          } catch (err) {
+            console.warn('[TripoSR] Cloud inference failed, using fallback:', err);
+            showToast(`Cloud inference unavailable (${err.message}). Switched to on-device reconstruction.`, 'warn', 6000);
+          }
+        }
+
+        if (!model) {
+          setLoaderSub(token
+            ? 'Running on-device procedural reconstruction…'
+            : 'No API key — running on-device procedural reconstruction…');
+          await nextFrame();
+          await delay(450); // let the spinner render before the CPU-heavy step
+          setLoaderSub('Segmenting subject & inflating silhouette…');
+          await nextFrame();
+          const result = buildProceduralModel(img);
+          model = result.object;
+          segmented = result.segmented;
+          setLoaderSub('Projecting texture onto mesh…');
+          await delay(300);
+        }
+
+        const mounted = setModel(model);
+        resetView();
+        if (!mounted) {
+          setChip('procedural', 'Default model');
+        } else if (mode === 'cloud') {
+          setChip('cloud', 'TripoSR · Cloud');
+          showToast('3D mesh loaded from Hugging Face TripoSR.', 'success');
+        } else {
+          setChip('procedural', segmented ? 'Procedural · Local' : 'Procedural · Tile');
+          if (!token) {
+            showToast(segmented
+              ? 'Subject reconstructed on-device. Add a Hugging Face key for AI-generated meshes.'
+              : 'Background too busy to isolate the subject — generated a 3D photo relief instead.', 'success', 5000);
+          }
+        }
+      } catch (err) {
+        console.error('[upload] Processing failed:', err);
+        if (!currentWrapper) setModel(createPlaceholder());
+        setChip('procedural', 'Failed');
+        showToast(`Could not process this image: ${err.message}`, 'error', 6000);
+      } finally {
+        hideLoader();
+        busy = false;
+        els.uploadBtn.classList.remove('disabled');
+        els.fileInput.value = '';
+      }
+    }
+
+    /* =====================================================
+       Events
+    ===================================================== */
+    els.fileInput.addEventListener('change', (e) => handleFile(e.target.files && e.target.files[0]));
+    els.uploadBtn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); els.fileInput.click(); }
+    });
+
+    els.token.addEventListener('input', () => els.tokenWrap.classList.toggle('has-value', !!els.token.value.trim()));
+    els.toggleToken.addEventListener('click', () => {
+      els.token.type = els.token.type === 'password' ? 'text' : 'password';
+    });
+
+    els.btnReset.addEventListener('click', resetView);
+    els.btnAuto.addEventListener('click', () => setAutoRotate(!controls.autoRotate));
+    els.btnWire.addEventListener('click', () => {
+      wireframeOn = !wireframeOn;
+      els.btnWire.classList.toggle('active', wireframeOn);
+      applyWireframe();
+    });
+    els.btnDemo.addEventListener('click', () => {
+      if (busy) return;
+      setModel(createPlaceholder());
+      els.preview.classList.add('hidden');
+      resetView();
+      setAutoRotate(true);
+    });
+
+    // Drag & drop
+    let dragDepth = 0;
+    window.addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; els.drop.classList.add('active'); });
+    window.addEventListener('dragover', (e) => e.preventDefault());
+    window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; els.drop.classList.remove('active'); } });
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dragDepth = 0;
+      els.drop.classList.remove('active');
+      handleFile(e.dataTransfer && e.dataTransfer.files[0]);
+    });
+
+    // Disable context menu on canvas so right-drag panning feels native
+    els.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // Keep overlays positioned under the (possibly wrapping) header
+    const updateHeaderVar = () =>
+      document.documentElement.style.setProperty('--header-h', `${els.header.getBoundingClientRect().bottom}px`);
+    if ('ResizeObserver' in window) new ResizeObserver(updateHeaderVar).observe(els.header);
+    updateHeaderVar();
+
+    function onResize() {
+      const w = window.innerWidth, h = window.innerHeight;
+      camera.aspect = w / h;
+      // Pull the camera back a bit on narrow portrait screens
+      camera.fov = w / h < 0.8 ? 58 : 45;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+      updateHeaderVar();
+    }
+    window.addEventListener('resize', onResize);
+    onResize();
+
+    /* =====================================================
+       Render loop
+    ===================================================== */
+    const clock = new THREE.Clock();
+    const easeOutBack = (x) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const t = clock.elapsedTime;
+
+      floatRoot.position.y = Math.sin(t * 1.1) * 0.08;
+      floatRoot.rotation.z = Math.sin(t * 0.7) * 0.015;
+
+      if (currentWrapper) {
+        const ud = currentWrapper.userData;
+        if (ud.spawn < 1) {
+          ud.spawn = Math.min(1, ud.spawn + dt * 1.5);
+          currentWrapper.scale.setScalar(Math.max(0.001, easeOutBack(ud.spawn)));
+        }
+        if (ud.animate) ud.animate(t, dt);
+      }
+
+      ringA.rotation.z += dt * 0.15;
+      ringB.rotation.z -= dt * 0.3;
+      ringA.material.opacity = 0.35 + Math.sin(t * 2) * 0.12;
+      glow.material.opacity = 0.85 + Math.sin(t * 1.1) * 0.15;
+
+      const arr = pGeo.attributes.position.array;
+      for (let i = 0; i < PARTICLES; i++) {
+        arr[i * 3 + 1] += pSpeed[i] * dt;
+        if (arr[i * 3 + 1] > GROUND_Y + 6) arr[i * 3 + 1] = GROUND_Y;
+      }
+      pGeo.attributes.position.needsUpdate = true;
+      particles.rotation.y += dt * 0.03;
+
+      if (camTween) {
+        const k = 1 - Math.pow(0.001, dt); // frame-rate independent easing
+        camera.position.lerp(camTween.pos, k);
+        controls.target.lerp(camTween.target, k);
+        if (camera.position.distanceTo(camTween.pos) < 0.005 && controls.target.distanceTo(camTween.target) < 0.005) camTween = null;
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    setModel(createPlaceholder());
+    animate();
+
+    // Optional remote model via ?model=<url>. No hardcoded external asset URLs.
+    const remoteParam = new URLSearchParams(window.location.search).get('model');
+    if (remoteParam) {
+      if (/^https?:\/\//i.test(remoteParam)) loadModelFromUrl(remoteParam);
+      else console.warn('[asset] Ignoring invalid ?model= URL:', remoteParam);
+    }
+    if (window.__studioMissing && window.__studioMissing.length) {
+      console.warn('[deps] Optional loaders unavailable:', window.__studioMissing);
+    }
+    window.studio = { loadModelFromUrl };
+  };
+  </script>
+
+  <!-- ================= Dependency loader with CDN mirrors ================= -->
+  <script>
+  (() => {
+    const MIRRORS = [
+      'https://cdn.jsdelivr.net/npm/three@0.128.0/',
+      'https://unpkg.com/three@0.128.0/',
+    ];
+    const DEPS = [
+      { path: 'build/three.min.js', required: true, ok: () => typeof window.THREE !== 'undefined' },
+      { path: 'examples/js/controls/OrbitControls.js', required: true, ok: () => !!(window.THREE && THREE.OrbitControls) },
+      { path: 'examples/js/loaders/GLTFLoader.js', required: false, ok: () => !!(window.THREE && THREE.GLTFLoader) },
+      { path: 'examples/js/loaders/OBJLoader.js', required: false, ok: () => !!(window.THREE && THREE.OBJLoader) },
+    ];
+
+    const fatal = (msg) => document.body.insertAdjacentHTML('beforeend', `<div class="fatal">${msg}</div>`);
+
+    function loadScript(src, timeoutMs = 15000) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.async = false;
+        const timer = setTimeout(() => { s.remove(); reject(new Error(`Timeout: ${src}`)); }, timeoutMs);
+        s.onload = () => { clearTimeout(timer); resolve(); };
+        s.onerror = () => { clearTimeout(timer); s.remove(); reject(new Error(`Failed: ${src}`)); };
+        document.head.appendChild(s);
+      });
+    }
+
+    async function loadDep(dep) {
+      if (dep.ok()) return true;
+      for (const base of MIRRORS) {
+        try {
+          await loadScript(base + dep.path);
+          if (dep.ok()) return true;
+          console.warn('[deps] Loaded but expected symbol missing:', base + dep.path);
+        } catch (err) {
+          console.warn('[deps]', err.message, '→ trying next mirror');
+        }
+      }
+      return false;
+    }
+
+    (async () => {
+      const missing = [];
+      for (const dep of DEPS) {
+        if (await loadDep(dep)) continue;
+        if (dep.required) {
+          console.error('[deps] Required dependency unavailable on all mirrors:', dep.path);
+          fatal('Could not load the 3D engine from any CDN. Please check your internet connection and reload.');
+          return;
+        }
+        missing.push(dep.path);
+      }
+      window.__studioMissing = missing;
+      try {
+        window.__startStudio();
+      } catch (err) {
+        console.error('[app] Startup failed:', err);
+        fatal('The 3D viewer failed to start. See the browser console for details.');
+      }
+    })();
+  })();
+  </script>
+</body>
+</html>
